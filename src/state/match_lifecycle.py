@@ -14,6 +14,7 @@ log = logging.getLogger(__name__)
 _IN_PROGRESS = "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS"
 _PRE_GAME = "DOTA_GAMERULES_STATE_PRE_GAME"
 _POST_GAME = "DOTA_GAMERULES_STATE_POST_GAME"
+_HERO_SELECTION = "DOTA_GAMERULES_STATE_HERO_SELECTION"
 
 _ACTIVE_STATES = {_IN_PROGRESS, _PRE_GAME}
 
@@ -29,10 +30,14 @@ class MatchLifecycle:
         db: Database,
         on_match_start: Callable[[int], None] | None = None,
         on_match_end: Callable[[int, str | None], None] | None = None,
+        on_draft_start: Callable[[], None] | None = None,
+        on_draft_end: Callable[[], None] | None = None,
     ) -> None:
         self._db = db
         self._on_start = on_match_start
         self._on_end = on_match_end
+        self._on_draft_start = on_draft_start
+        self._on_draft_end = on_draft_end
         self._match_id: int | None = None
         self._prev_state: str | None = None
         self._hero_set = False
@@ -50,6 +55,18 @@ class MatchLifecycle:
         gs = parsed.game_state
         if gs is None:
             return
+
+        prev = self._prev_state
+
+        # Draft phase: hero selection screen
+        if gs == _HERO_SELECTION and prev != _HERO_SELECTION:
+            log.info("Draft phase started (HERO_SELECTION)")
+            if self._on_draft_start:
+                self._on_draft_start()
+        if prev == _HERO_SELECTION and gs != _HERO_SELECTION:
+            log.info("Draft phase ended -> %s", gs)
+            if self._on_draft_end:
+                self._on_draft_end()
 
         # Transition into active game
         if gs in _ACTIVE_STATES and self._match_id is None:

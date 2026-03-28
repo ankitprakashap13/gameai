@@ -2,7 +2,7 @@
 
 Real-time coaching companion for Dota 2. Reads your game state, watches your screen, and gives you actionable tips via a transparent overlay -- all while you play.
 
-**How it works:** Game State Integration (GSI) feeds live match data, OpenCV reads your minimap/items/cooldowns from the screen, and an LLM turns it all into short coaching tips displayed on top of your game.
+**How it works:** Game State Integration (GSI) feeds live match data, OpenCV reads your minimap/items/cooldowns from the screen, and an LLM turns it all into short coaching tips displayed on top of your game. During **hero selection** (`HERO_SELECTION`), the vision layer switches to **draft mode**: it crops the top portrait bar, segments slots, and template-matches against `assets/templates/portraits/` (created by `download_assets.py`) so the coach can suggest picks (detection quality depends on resolution/UI; re-run `download_assets.py` if portraits are missing).
 
 ---
 
@@ -91,7 +91,7 @@ The script auto-detects your Dota 2 install and copies the config file. If auto-
 python scripts/download_assets.py
 ```
 
-Downloads hero and item icons from Steam's CDN for screen matching (~2 min).
+Downloads hero and item icons from Steam's CDN for screen matching (~2 min). Hero downloads also write **color draft portraits** (62×35) under `assets/templates/portraits/` for pick-screen matching; minimap templates stay grayscale in `assets/templates/heroes/`.
 
 ### 7. Set Dota 2 to Borderless Windowed
 
@@ -227,6 +227,7 @@ The app reads settings from `config.yaml` (defaults) with optional overrides in 
 | `llm.throttle_seconds` | `10.0` | Minimum seconds between coaching tips |
 | `overlay.position` | `top_right` | Tip location: `top_right` or `right_center` |
 | `overlay.tip_duration_seconds` | `8.0` | How long each tip stays on screen |
+| `paths.templates_portraits` | `assets/templates/portraits` | Color portrait templates for draft detection |
 
 ---
 
@@ -236,12 +237,17 @@ The app reads settings from `config.yaml` (defaults) with optional overrides in 
 GSI (JSON/HTTP) ──> Flask server ──> State Aggregator ──> LLM Coach ──> Overlay
 Screen capture  ──> Vision Pipeline ──────┘                              (PyQt6)
                     (OpenCV detectors)
+
+Draft mode (HERO_SELECTION):
+  GSI game_state ──> MatchLifecycle ──> set_mode("draft") on VisionPipeline
+  Screen capture ──> Draft Detector (top-bar slot segmentation + portrait template match)
+                 ──> DraftState ──> draft-specific LLM prompt ──> pick suggestion in Overlay
 ```
 
 - `src/gsi/` -- Flask GSI receiver, typed parser
-- `src/vision/` -- `mss` capture (~2 FPS), template matching detectors (minimap, items, health/mana, cooldowns)
-- `src/state/` -- Aggregator merges GSI + vision; match lifecycle auto-detects game start/end
-- `src/llm/` -- Pluggable providers (OpenAI, Anthropic, Ollama), throttled prompts, tip deduplication
+- `src/vision/` -- `mss` capture (~2 FPS), template matching detectors (minimap, items, health/mana, cooldowns); **draft detector** segments the top portrait bar and matches slots against `assets/templates/portraits/`
+- `src/state/` -- Aggregator merges GSI + vision; match lifecycle auto-detects game start/end and **draft phase** (HERO_SELECTION)
+- `src/llm/` -- Pluggable providers (OpenAI, Anthropic, Ollama), throttled prompts, tip deduplication; switches to a **draft-specific prompt** during hero selection
 - `src/overlay/` -- Always-on-top coaching sidebar with chat, message history, and in-app settings
 - `src/db/` -- SQLite (WAL mode) with tables for matches, events, vision snapshots, and coaching tips
 
@@ -277,6 +283,8 @@ The app is designed to run alongside Dota 2 with minimal impact:
 **"Vision templates missing"** -- Run `python scripts/download_assets.py` to fetch hero/item icons.
 
 **Tips not appearing** -- Make sure Dota is in Borderless Windowed mode. Check that `python main.py` is running and Dota's GSI config is installed.
+
+**Draft picks not detected / wrong heroes** -- Detection works best at 1080p or higher with Borderless Windowed. At 720p or below, portraits are very small and accuracy drops. Make sure `assets/templates/portraits/` has PNG files (re-run `python scripts/download_assets.py` if empty). Ultrawide monitors (21:9) may need ROI tuning.
 
 **Overlay covers game UI** -- Drag the title bar to reposition the window, or use the gear icon to adjust width.
 

@@ -15,6 +15,7 @@ display:
 paths:
   db: "dota_gsi.db"
   templates_heroes: "assets/templates/heroes"
+  templates_portraits: "assets/templates/portraits"
   templates_items: "assets/templates/items"
   templates_wards: "assets/templates/wards"
 

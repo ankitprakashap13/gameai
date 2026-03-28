@@ -1,4 +1,4 @@
-"""Run all vision detectors on frames from the capture queue."""
+"""Run vision detectors on frames from the capture queue (in-game or draft mode)."""
 
 from __future__ import annotations
 
@@ -13,8 +13,9 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-from src.state.models import VisionState
+from src.state.models import DraftState, VisionState
 from src.vision.detectors.cooldowns import CooldownDetector
+from src.vision.detectors.draft import DraftPortraitDetector
 from src.vision.detectors.health import HealthManaDetector
 from src.vision.detectors.items import ItemSlotDetector
 from src.vision.detectors.minimap import MinimapHeroDetector
@@ -27,16 +28,32 @@ class VisionPipeline:
         heroes_dir: Path | str,
         items_dir: Path | str,
         wards_dir: Path | str | None = None,
+        portraits_dir: Path | str | None = None,
         on_vision_state: Callable[[VisionState], None] | None = None,
+        on_draft_state: Callable[[DraftState], None] | None = None,
     ) -> None:
         self._frame_queue = frame_queue
         self._on_vision = on_vision_state
+        self._on_draft = on_draft_state
         self._minimap = MinimapHeroDetector(heroes_dir, wards_dir=wards_dir)
         self._items = ItemSlotDetector(items_dir)
         self._health = HealthManaDetector()
         self._cooldowns = CooldownDetector()
+        pdir = portraits_dir if portraits_dir is not None else Path(heroes_dir).parent / "portraits"
+        self._draft = DraftPortraitDetector(pdir, fallback_heroes_dir=heroes_dir)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+        self._mode = "in_game"
+        self._player_team: str | None = None
+
+    def set_mode(self, mode: str) -> None:
+        with self._lock:
+            self._mode = "draft" if mode == "draft" else "in_game"
+
+    def set_player_team(self, team: str | None) -> None:
+        with self._lock:
+            self._player_team = team.lower() if team else None
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -67,6 +84,9 @@ class VisionPipeline:
             frame_height=h,
         )
 
+    def process_draft(self, frame_bgr: np.ndarray, w: int, h: int, player_team: str | None) -> DraftState | None:
+        return self._draft.detect(frame_bgr, w, h, player_team=player_team)
+
     def _loop(self) -> None:
         while not self._stop.is_set():
             try:
@@ -74,9 +94,17 @@ class VisionPipeline:
             except queue.Empty:
                 continue
             try:
-                vs = self.process_one(frame_bgr, w, h)
-                if self._on_vision:
-                    self._on_vision(vs)
+                with self._lock:
+                    mode = self._mode
+                    player_team = self._player_team
+                if mode == "draft":
+                    ds = self.process_draft(frame_bgr, w, h, player_team)
+                    if ds is not None and self._on_draft:
+                        self._on_draft(ds)
+                else:
+                    vs = self.process_one(frame_bgr, w, h)
+                    if self._on_vision:
+                        self._on_vision(vs)
             except Exception:
                 log.exception("Vision pipeline frame error")
                 time.sleep(0.05)

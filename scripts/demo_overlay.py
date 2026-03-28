@@ -31,6 +31,12 @@ SAMPLE_TIPS = [
     "Your power spike is now -- group with team and push.",
 ]
 
+DRAFT_DEMO_TIP = (
+    "Draft detected — Your team: Jakiro, Sniper, Ogre Magi, (empty), (empty). "
+    "Enemy: Phantom Assassin, Zeus, Witch Doctor, (empty), (empty). "
+    "Suggest: pick Axe to counter PA and add frontline for your team."
+)
+
 
 def main() -> int:
     app = QApplication(sys.argv)
@@ -39,8 +45,13 @@ def main() -> int:
     overlay.show()
 
     tip_idx = [0]
+    draft_shown = [False]
 
     def send_next_tip() -> None:
+        if not draft_shown[0]:
+            overlay.enqueue_tip(DRAFT_DEMO_TIP)
+            draft_shown[0] = True
+            return
         if tip_idx[0] < len(SAMPLE_TIPS):
             overlay.enqueue_tip(SAMPLE_TIPS[tip_idx[0]])
             tip_idx[0] += 1
@@ -60,6 +71,7 @@ def main() -> int:
     timer.start(8000)
 
     print("Overlay demo running.")
+    print("  First tip simulates draft coaching (hero picks + suggestion).")
     print("  Drag the title bar to move the window.")
     print("  Click the collapse button (-) to minimize.")
     print("  Type in the chat box and press Enter.")

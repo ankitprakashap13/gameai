@@ -72,8 +72,9 @@ def main() -> int:
     heroes_dir = root / paths.get("templates_heroes", "assets/templates/heroes")
     items_dir = root / paths.get("templates_items", "assets/templates/items")
     wards_dir = root / paths.get("templates_wards", "assets/templates/wards")
+    portraits_dir = root / paths.get("templates_portraits", "assets/templates/portraits")
 
-    for d in (heroes_dir, items_dir, wards_dir):
+    for d in (heroes_dir, items_dir, wards_dir, portraits_dir):
         d.mkdir(parents=True, exist_ok=True)
 
     if not run_preflight(root, cfg):
@@ -111,8 +112,11 @@ def main() -> int:
         heroes_dir=heroes_dir,
         items_dir=items_dir,
         wards_dir=wards_dir,
+        portraits_dir=portraits_dir,
         on_vision_state=aggregator.on_vision_state,
+        on_draft_state=aggregator.on_draft_state,
     )
+    aggregator.attach_vision_pipeline(vision)
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)

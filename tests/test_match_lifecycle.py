@@ -86,3 +86,21 @@ def test_no_state_is_noop():
     lc.update(_parsed())
     assert lc.match_id is None
     db.close()
+
+
+def test_draft_start_and_end_callbacks():
+    db = _tmp_db()
+    started: list[int] = []
+    ended: list[int] = []
+    lc = MatchLifecycle(
+        db,
+        on_draft_start=lambda: started.append(1),
+        on_draft_end=lambda: ended.append(1),
+    )
+    lc.update(_parsed(game_state="DOTA_GAMERULES_STATE_HERO_SELECTION"))
+    assert len(started) == 1
+    lc.update(_parsed(game_state="DOTA_GAMERULES_STATE_HERO_SELECTION"))
+    assert len(started) == 1
+    lc.update(_parsed(game_state="DOTA_GAMERULES_STATE_PRE_GAME"))
+    assert len(ended) == 1
+    db.close()

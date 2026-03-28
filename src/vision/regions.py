@@ -19,6 +19,9 @@ class ROI:
 BASE_W = 1920
 BASE_H = 1080
 
+# Draft / pick screen: full-width top bar with team portraits (1080p baseline)
+DRAFT_TOP_BAR_BASE = ROI(left=0, top=8, width=1920, height=74)
+
 # Minimap: bottom-left
 MINIMAP_BASE = ROI(left=0, top=820, width=280, height=260)
 

@@ -43,9 +43,21 @@ def _save_gray_png(data: bytes, out_path: Path, size: tuple[int, int]) -> None:
     cv2.imwrite(str(out_path), gray)
 
 
+def _save_color_png(data: bytes, out_path: Path, size: tuple[int, int]) -> None:
+    """Color templates for draft top-bar matching (approx in-game portrait aspect)."""
+    arr = np.frombuffer(data, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        return
+    img = cv2.resize(img, size, interpolation=cv2.INTER_AREA)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(out_path), img)
+
+
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
     heroes_dir = root / "assets" / "templates" / "heroes"
+    portraits_dir = root / "assets" / "templates" / "portraits"
     items_dir = root / "assets" / "templates" / "items"
     wards_dir = root / "assets" / "templates" / "wards"
 
@@ -65,6 +77,8 @@ def main() -> int:
         try:
             data = _download_bytes(url)
             _save_gray_png(data, out, (32, 32))
+            pout = portraits_dir / f"{stem}.png"
+            _save_color_png(data, pout, (62, 35))
             hero_count += 1
             print(f"  hero {hero_count}: {out.name}")
         except Exception as e:
@@ -99,6 +113,7 @@ def main() -> int:
         encoding="utf-8",
     )
     print(f"Hero templates: {hero_count} → {heroes_dir}")
+    print(f"Draft portraits (color): {hero_count} → {portraits_dir}")
     return 0
 
 

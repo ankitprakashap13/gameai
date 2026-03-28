@@ -36,6 +36,25 @@ class AbilityCooldownDetection:
 
 
 @dataclass
+class DraftHeroPick:
+    """One hero portrait slot on the draft top bar."""
+
+    slot_index: int
+    hero_id: str | None
+    confidence: float
+    team: str  # "radiant" | "dire"
+
+
+@dataclass
+class DraftState:
+    """Detected picks during hero selection (vision)."""
+
+    ally_picks: list[DraftHeroPick]
+    enemy_picks: list[DraftHeroPick]
+    timestamp_utc: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass
 class VisionState:
     """Output of the vision pipeline for one frame."""
 
@@ -79,4 +98,5 @@ class GameState:
 
     gsi: GSIParsedState
     vision: VisionState | None = None
+    draft: DraftState | None = None
     merged_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
