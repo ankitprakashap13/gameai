@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+dota_gsi.db
+config.local.yaml
+.env
+build/
+dist/
+*.spec
+.DS_Store
+debug_*/
+debug_*.png
