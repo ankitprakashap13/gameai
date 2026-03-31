@@ -1,4 +1,4 @@
-"""Format game state into prompts; throttle LLM calls; persist and deduplicate tips."""
+"""Format game state into prompts; generate tips on meaningful events; persist and deduplicate."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ Respond with ONE short line (max 15 words) of actionable advice. No profanity.""
 SYSTEM_PROMPT_DRAFT = """You are a Dota 2 draft coach for Ranked All Pick.
 Give ONE pick suggestion with a 1-2 sentence rationale. Be concise. No profanity."""
 
-_DRAFT_THROTTLE_S = 5.0
+_MIN_COOLDOWN_S = 5.0
 
 
 def _hero_label(hero_id: str | None) -> str:
@@ -93,7 +93,7 @@ class CoachService:
         provider: LLMProvider,
         db: Database,
         get_match_id: Callable[[], int | None],
-        throttle_seconds: float = 10.0,
+        min_cooldown_seconds: float = _MIN_COOLDOWN_S,
         max_tokens: int = 120,
         dedup_threshold: float = 0.6,
         dedup_window: int = 5,
@@ -102,7 +102,7 @@ class CoachService:
         self._provider = provider
         self._db = db
         self._get_match_id = get_match_id
-        self._throttle = max(3.0, throttle_seconds)
+        self._min_cooldown = max(2.0, min_cooldown_seconds)
         self._max_tokens = max_tokens
         self._dedup_threshold = dedup_threshold
         self._dedup_window = dedup_window
@@ -117,15 +117,22 @@ class CoachService:
                 return True
         return False
 
-    async def maybe_generate_tip(self, state: GameState) -> str | None:
-        in_draft = state.draft is not None
-        throttle = _DRAFT_THROTTLE_S if in_draft else self._throttle
+    async def on_event(self, state: GameState, reason: str) -> str | None:
+        """Called by the aggregator when a meaningful game event is detected.
+
+        Applies a minimum cooldown to avoid back-to-back LLM calls (e.g. multi-kill
+        fires multiple kill events in quick succession), but otherwise trusts
+        the caller to only invoke this on real events.
+        """
         async with self._lock:
             now = time.monotonic()
-            if now - self._last_call < throttle:
+            if now - self._last_call < self._min_cooldown:
+                log.debug("Event '%s' skipped (cooldown)", reason)
                 return None
             self._last_call = now
 
+        log.info("Generating tip for event: %s", reason)
+        in_draft = state.draft is not None
         user_prompt = _format_draft_prompt(state) if in_draft else _format_user_prompt(state)
         system = SYSTEM_PROMPT_DRAFT if in_draft else SYSTEM_PROMPT
         match_id = self._get_match_id()
@@ -158,7 +165,7 @@ class CoachService:
         return text
 
     async def answer_user_question(self, question: str, state: GameState) -> str | None:
-        """Direct question from the user -- no throttle, no dedup."""
+        """Direct question from the user -- no cooldown, no dedup."""
         in_draft = state.draft is not None
         context = _format_draft_prompt(state) if in_draft else _format_user_prompt(state)
         system = SYSTEM_PROMPT_DRAFT if in_draft else SYSTEM_PROMPT

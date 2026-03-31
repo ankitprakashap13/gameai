@@ -13,7 +13,7 @@ import sys
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 
 from src.config_loader import load_config
@@ -24,6 +24,7 @@ from src.llm.factory import build_llm_provider
 from src.overlay.window import CoachOverlayWindow
 from src.preflight import run_preflight
 from src.state.aggregator import StateAggregator
+from src.state.models import GameState
 from src.vision.capture import ScreenCaptureService
 from src.vision.pipeline import VisionPipeline
 
@@ -82,9 +83,33 @@ def main() -> int:
 
     db = Database(db_path)
 
+    llm_cfg = cfg.get("llm") or {}
+    provider = build_llm_provider(cfg)
+
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(True)
+
+    bridge = TipBridge()
+
+    async_runner = AsyncLoopRunner()
+    async_runner.start()
+
+    coach = CoachService(
+        provider=provider,
+        db=db,
+        get_match_id=lambda: aggregator.match_id,
+        min_cooldown_seconds=float(llm_cfg.get("min_cooldown_seconds", 5.0)),
+        max_tokens=int(llm_cfg.get("max_tokens", 120)),
+        on_tip=lambda t: bridge.tip.emit(t),
+    )
+
+    def on_meaningful_change(state: GameState, reason: str) -> None:
+        async_runner.submit(coach.on_event(state, reason))
+
     aggregator = StateAggregator(
         db=db,
         history_seconds=float(cfg.get("state", {}).get("history_seconds", 30.0)),
+        on_meaningful_change=on_meaningful_change,
     )
 
     gsi_cfg = cfg.get("gsi") or {}
@@ -118,32 +143,13 @@ def main() -> int:
     )
     aggregator.attach_vision_pipeline(vision)
 
-    app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(True)
-
     overlay_cfg = cfg.get("overlay") or {}
     overlay = CoachOverlayWindow(
         position=str(overlay_cfg.get("position", "top_right")),
         tip_duration_ms=int(float(overlay_cfg.get("tip_duration_seconds", 8.0)) * 1000),
     )
 
-    bridge = TipBridge()
     bridge.tip.connect(overlay.enqueue_tip, Qt.ConnectionType.QueuedConnection)
-
-    llm_cfg = cfg.get("llm") or {}
-    provider = build_llm_provider(cfg)
-
-    coach = CoachService(
-        provider=provider,
-        db=db,
-        get_match_id=lambda: aggregator.match_id,
-        throttle_seconds=float(llm_cfg.get("throttle_seconds", 10.0)),
-        max_tokens=int(llm_cfg.get("max_tokens", 120)),
-        on_tip=lambda t: bridge.tip.emit(t),
-    )
-
-    async_runner = AsyncLoopRunner()
-    async_runner.start()
 
     def on_user_chat(question: str) -> None:
         state = aggregator.current()
@@ -158,24 +164,19 @@ def main() -> int:
     overlay.chat_submitted.connect(on_user_chat, Qt.ConnectionType.QueuedConnection)
 
     def on_frequency_changed(seconds: int) -> None:
-        coach._throttle = max(3.0, float(seconds))
-        log.info("Tip frequency changed to %ds", seconds)
+        coach._min_cooldown = max(2.0, float(seconds))
+        log.info("Min cooldown changed to %ds", seconds)
 
     overlay.frequency_changed.connect(on_frequency_changed, Qt.ConnectionType.QueuedConnection)
-
-    def poll_coach() -> None:
-        state = aggregator.current()
-        async_runner.submit(coach.maybe_generate_tip(state))
-
-    poll_ms = 2000
-    timer = QTimer()
-    timer.timeout.connect(poll_coach)
-    timer.start(poll_ms)
 
     capture.start()
     vision.start()
     overlay.show()
-    log.info("Coach overlay running — capture %.1f FPS, LLM throttle %.0fs", fps, float(llm_cfg.get("throttle_seconds", 10.0)))
+    log.info(
+        "Coach overlay running — capture %.1f FPS, event-driven LLM (min cooldown %.0fs)",
+        fps,
+        float(llm_cfg.get("min_cooldown_seconds", 5.0)),
+    )
 
     exit_code = app.exec()
 

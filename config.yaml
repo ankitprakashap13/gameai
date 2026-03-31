@@ -25,7 +25,7 @@ llm:
   anthropic_model: "claude-3-5-haiku-20241022"
   ollama_model: "llama3.2"
   ollama_base_url: "http://localhost:11434"
-  throttle_seconds: 10.0
+  min_cooldown_seconds: 5.0
   max_tokens: 120
 
 overlay:
