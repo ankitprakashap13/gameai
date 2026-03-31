@@ -3,7 +3,8 @@
 LLM calls are event-driven: the aggregator detects meaningful GSI changes
 (game_state transitions, kills, deaths, level ups, item changes) and fires
 on_meaningful_change.  During draft, it diffs detected hero picks and fires
-the callback only when a new hero appears.
+the callback only when a new hero appears — but stops once the user has
+locked in their own pick (hero_name appears in GSI during HERO_SELECTION).
 """
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
     from src.vision.pipeline import VisionPipeline
 
 log = logging.getLogger(__name__)
+
+_HERO_SELECTION = "DOTA_GAMERULES_STATE_HERO_SELECTION"
 
 
 def _draft_hero_ids(draft: DraftState | None) -> frozenset[str]:
@@ -68,6 +71,7 @@ class StateAggregator:
         self._vision: VisionState | None = None
         self._draft: DraftState | None = None
         self._prev_draft_heroes: frozenset[str] = frozenset()
+        self._user_has_picked = False
         self._history: deque[GameState] = deque()
         self._vision_pipeline: VisionPipeline | None = None
         self._on_meaningful_change = on_meaningful_change
@@ -86,6 +90,7 @@ class StateAggregator:
         with self._lock:
             self._draft = None
             self._prev_draft_heroes = frozenset()
+            self._user_has_picked = False
             self._push_snapshot_unlocked()
 
     def _handle_draft_end(self) -> None:
@@ -94,6 +99,7 @@ class StateAggregator:
         with self._lock:
             self._draft = None
             self._prev_draft_heroes = frozenset()
+            self._user_has_picked = False
             self._push_snapshot_unlocked()
 
     @property
@@ -125,6 +131,21 @@ class StateAggregator:
             prev_gsi = self._gsi
             self._gsi = parsed
             self._push_snapshot_unlocked()
+
+        # During draft: detect when the user locks in their own hero.
+        # GSI hero_name transitions from None → a value while in HERO_SELECTION.
+        in_draft = parsed.game_state == _HERO_SELECTION
+        if (
+            in_draft
+            and not self._user_has_picked
+            and not prev_gsi.hero_name
+            and parsed.hero_name
+        ):
+            self._user_has_picked = True
+            log.info("User picked hero during draft: %s", parsed.hero_name)
+            if self._on_meaningful_change:
+                self._on_meaningful_change(self.current(), "user_picked_hero")
+            return
 
         reason = _gsi_changed(prev_gsi, parsed)
         if reason and self._on_meaningful_change:
@@ -171,6 +192,11 @@ class StateAggregator:
         with self._lock:
             self._draft = draft
             self._push_snapshot_unlocked()
+
+        # If the user already picked, stop sending draft pick suggestions.
+        if self._user_has_picked:
+            self._prev_draft_heroes = _draft_hero_ids(draft)
+            return
 
         new_heroes = _draft_hero_ids(draft)
         if new_heroes != self._prev_draft_heroes and self._on_meaningful_change:

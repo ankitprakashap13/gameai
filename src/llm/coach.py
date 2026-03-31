@@ -20,6 +20,10 @@ Respond with ONE short line (max 15 words) of actionable advice. No profanity.""
 SYSTEM_PROMPT_DRAFT = """You are a Dota 2 draft coach for Ranked All Pick.
 Give ONE pick suggestion with a 1-2 sentence rationale. Be concise. No profanity."""
 
+SYSTEM_PROMPT_STRATEGY = """You are a Dota 2 strategy coach. The player just locked in their hero.
+Give a brief game plan in 2-3 sentences: lane matchup advice, power spikes, and key items to rush.
+Be concise and practical. No profanity."""
+
 _MIN_COOLDOWN_S = 5.0
 
 
@@ -48,11 +52,31 @@ def _format_draft_prompt(state: GameState) -> str:
         f"Player side (GSI): {player_side}",
         ally,
         enemy,
-        "Infer missing roles from picks where possible.",
+        "",
+        "Analyze the ENTIRE enemy lineup holistically — not just the latest pick.",
+        "Consider all enemy heroes together: their combined strengths, weaknesses, and win conditions.",
+        "Also consider what roles your team still needs.",
         "",
         "Suggest ONE hero the player should pick and explain why in 1-2 sentences.",
-        "Focus on counter-picks and team synergy.",
+        "Focus on countering the overall enemy composition and filling team gaps.",
     ]
+    return "\n".join(lines)
+
+
+def _format_strategy_prompt(state: GameState) -> str:
+    """Post-pick strategy: the user just locked in, give them a game plan."""
+    g = state.gsi
+    hero = _hero_label(g.hero_name)
+    lines = [f"You just picked: {hero}"]
+    d = state.draft
+    if d:
+        lines.append(_format_draft_line("Your team", d.ally_picks))
+        lines.append(_format_draft_line("Enemy team", d.enemy_picks))
+    lines.extend([
+        "",
+        "Give a brief strategy for this hero in this matchup:",
+        "lane advice, key power spikes, and first items to rush.",
+    ])
     return "\n".join(lines)
 
 
@@ -85,6 +109,18 @@ def _format_user_prompt(state: GameState) -> str:
 
 def _similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+
+def _pick_prompt_and_system(
+    state: GameState,
+    reason: str,
+) -> tuple[str, str]:
+    """Select the right prompt + system message based on event type."""
+    if reason == "user_picked_hero":
+        return _format_strategy_prompt(state), SYSTEM_PROMPT_STRATEGY
+    if state.draft is not None:
+        return _format_draft_prompt(state), SYSTEM_PROMPT_DRAFT
+    return _format_user_prompt(state), SYSTEM_PROMPT
 
 
 class CoachService:
@@ -132,9 +168,7 @@ class CoachService:
             self._last_call = now
 
         log.info("Generating tip for event: %s", reason)
-        in_draft = state.draft is not None
-        user_prompt = _format_draft_prompt(state) if in_draft else _format_user_prompt(state)
-        system = SYSTEM_PROMPT_DRAFT if in_draft else SYSTEM_PROMPT
+        user_prompt, system = _pick_prompt_and_system(state, reason)
         match_id = self._get_match_id()
 
         t0 = time.perf_counter()
@@ -166,10 +200,8 @@ class CoachService:
 
     async def answer_user_question(self, question: str, state: GameState) -> str | None:
         """Direct question from the user -- no cooldown, no dedup."""
-        in_draft = state.draft is not None
-        context = _format_draft_prompt(state) if in_draft else _format_user_prompt(state)
-        system = SYSTEM_PROMPT_DRAFT if in_draft else SYSTEM_PROMPT
-        full_prompt = f"{context}\n\nThe player asks: {question}\n\nAnswer concisely (1-3 sentences)."
+        user_prompt, system = _pick_prompt_and_system(state, "user_question")
+        full_prompt = f"{user_prompt}\n\nThe player asks: {question}\n\nAnswer concisely (1-3 sentences)."
         match_id = self._get_match_id()
         t0 = time.perf_counter()
         try:
