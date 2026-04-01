@@ -12,3 +12,4 @@ dist/
 .DS_Store
 debug_*/
 debug_*.png
+*.db*
