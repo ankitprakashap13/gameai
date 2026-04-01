@@ -17,7 +17,7 @@ def test_draft_detector_runs_with_fallback_templates(tmp_path: Path) -> None:
 
     det = DraftPortraitDetector(tmp_path / "portraits", fallback_heroes_dir=heroes)
     frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
-    frame[8:82, :] = 60
+    frame[8:56, :] = 60
 
     out = det.detect(frame, 1920, 1080, player_team="radiant")
     assert out is not None

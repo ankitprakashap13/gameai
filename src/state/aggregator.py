@@ -77,12 +77,22 @@ class StateAggregator:
         self._on_meaningful_change = on_meaningful_change
         self._lifecycle = MatchLifecycle(
             db,
+            on_match_start=self._handle_match_start,
+            on_match_end=self._handle_match_end,
             on_draft_start=self._handle_draft_start,
             on_draft_end=self._handle_draft_end,
         )
 
     def attach_vision_pipeline(self, pipeline: VisionPipeline) -> None:
         self._vision_pipeline = pipeline
+
+    def _handle_match_start(self, match_id: int) -> None:
+        if self._vision_pipeline:
+            self._vision_pipeline.set_mode("in_game")
+
+    def _handle_match_end(self, match_id: int, outcome: str | None) -> None:
+        if self._vision_pipeline:
+            self._vision_pipeline.set_mode("idle")
 
     def _handle_draft_start(self) -> None:
         if self._vision_pipeline:

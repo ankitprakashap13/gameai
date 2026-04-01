@@ -64,7 +64,6 @@ def main() -> int:
         "--hidden-import", "src.vision.detectors.health",
         "--hidden-import", "src.vision.detectors.cooldowns",
         "--hidden-import", "src.vision.detectors.draft",
-        "--hidden-import", "scipy.signal",
         "--hidden-import", "src.llm.base",
         "--hidden-import", "src.llm.factory",
         "--hidden-import", "src.llm.coach",

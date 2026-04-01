@@ -132,12 +132,14 @@ def main() -> int:
     capture = ScreenCaptureService(fps=fps, monitor_index=mon)
     frame_q = capture.get_queue()
 
+    debug_dir = root / "debug_draft"
     vision = VisionPipeline(
         frame_q,
         heroes_dir=heroes_dir,
         items_dir=items_dir,
         wards_dir=wards_dir,
         portraits_dir=portraits_dir,
+        debug_dir=debug_dir,
         on_vision_state=aggregator.on_vision_state,
         on_draft_state=aggregator.on_draft_state,
     )

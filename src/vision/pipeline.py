@@ -1,4 +1,10 @@
-"""Run vision detectors on frames from the capture queue (in-game or draft mode)."""
+"""Run vision detectors on frames from the capture queue.
+
+Three modes:
+  - "idle"    — drain frames, no processing (default; outside a game)
+  - "draft"   — run DraftPortraitDetector (during HERO_SELECTION)
+  - "in_game" — run minimap/items/health/cooldown detectors
+"""
 
 from __future__ import annotations
 
@@ -20,6 +26,8 @@ from src.vision.detectors.health import HealthManaDetector
 from src.vision.detectors.items import ItemSlotDetector
 from src.vision.detectors.minimap import MinimapHeroDetector
 
+_VALID_MODES = {"idle", "draft", "in_game"}
+
 
 class VisionPipeline:
     def __init__(
@@ -29,6 +37,7 @@ class VisionPipeline:
         items_dir: Path | str,
         wards_dir: Path | str | None = None,
         portraits_dir: Path | str | None = None,
+        debug_dir: Path | str | None = None,
         on_vision_state: Callable[[VisionState], None] | None = None,
         on_draft_state: Callable[[DraftState], None] | None = None,
     ) -> None:
@@ -40,16 +49,22 @@ class VisionPipeline:
         self._health = HealthManaDetector()
         self._cooldowns = CooldownDetector()
         pdir = portraits_dir if portraits_dir is not None else Path(heroes_dir).parent / "portraits"
-        self._draft = DraftPortraitDetector(pdir, fallback_heroes_dir=heroes_dir)
+        self._draft = DraftPortraitDetector(pdir, fallback_heroes_dir=heroes_dir, debug_dir=debug_dir)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
-        self._mode = "in_game"
+        self._mode = "idle"
         self._player_team: str | None = None
 
     def set_mode(self, mode: str) -> None:
+        mode = mode if mode in _VALID_MODES else "idle"
         with self._lock:
-            self._mode = "draft" if mode == "draft" else "in_game"
+            prev = self._mode
+            self._mode = mode
+            if mode != prev:
+                log.info("Vision pipeline mode: %s -> %s", prev, mode)
+                if prev == "draft" or mode == "draft":
+                    self._draft.reset()
 
     def set_player_team(self, team: str | None) -> None:
         with self._lock:
@@ -97,6 +112,10 @@ class VisionPipeline:
                 with self._lock:
                     mode = self._mode
                     player_team = self._player_team
+
+                if mode == "idle":
+                    continue
+
                 if mode == "draft":
                     ds = self.process_draft(frame_bgr, w, h, player_team)
                     if ds is not None and self._on_draft:
