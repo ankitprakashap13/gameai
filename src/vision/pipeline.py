@@ -56,6 +56,11 @@ class VisionPipeline:
         self._mode = "idle"
         self._player_team: str | None = None
 
+    @property
+    def mode(self) -> str:
+        with self._lock:
+            return self._mode
+
     def set_mode(self, mode: str) -> None:
         mode = mode if mode in _VALID_MODES else "idle"
         with self._lock:

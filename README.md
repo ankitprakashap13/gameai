@@ -107,6 +107,12 @@ python main.py
 
 The app runs startup checks and tells you if anything is missing. Once running, start a Dota 2 match and coaching tips will appear in the top-right corner of your screen.
 
+To launch with the **debug panel** (live GSI state, LLM stats, and logs below the overlay):
+
+```
+python main.py --debug
+```
+
 ---
 
 ## Quick Start (Mac)
@@ -189,6 +195,8 @@ In Dota 2: **Settings > Video > Display Mode > Borderless Window**
 python main.py
 ```
 
+For **debug mode** (live GSI state, LLM stats, and logs): `python main.py --debug`
+
 > **Mac permissions note:** The first launch may trigger macOS permission prompts:
 > - **Screen Recording** -- required for `mss` screen capture. Go to **System Settings > Privacy & Security > Screen Recording** and enable your Terminal app.
 > - Without this, the vision pipeline will capture blank frames. GSI and the LLM coach still work fine without it.
@@ -228,6 +236,8 @@ The app reads settings from `config.yaml` (defaults) with optional overrides in 
 | `overlay.position` | `top_right` | Tip location: `top_right` or `right_center` |
 | `overlay.tip_duration_seconds` | `8.0` | How long each tip stays on screen |
 | `paths.templates_portraits` | `assets/templates/portraits` | Color portrait templates for draft detection |
+
+Launch with `python main.py --debug` to show a debug panel below the overlay with live GSI data, LLM call counts and latency, vision pipeline mode, and a scrollable log viewer.
 
 ---
 

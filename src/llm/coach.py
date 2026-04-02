@@ -146,6 +146,11 @@ class CoachService:
         self._last_call = 0.0
         self._lock = asyncio.Lock()
 
+        self.stats_call_count = 0
+        self.stats_chat_count = 0
+        self.stats_total_latency_ms = 0
+        self.stats_last_reason: str | None = None
+
     def _is_duplicate(self, tip: str, match_id: int | None) -> bool:
         recent = self._db.get_recent_tips(match_id, limit=self._dedup_window)
         for row in recent:
@@ -168,6 +173,7 @@ class CoachService:
             self._last_call = now
 
         log.info("Generating tip for event: %s", reason)
+        self.stats_last_reason = reason
         user_prompt, system = _pick_prompt_and_system(state, reason)
         match_id = self._get_match_id()
 
@@ -178,6 +184,8 @@ class CoachService:
             log.exception("LLM generation failed")
             return None
         latency_ms = int((time.perf_counter() - t0) * 1000)
+        self.stats_call_count += 1
+        self.stats_total_latency_ms += latency_ms
 
         if not text:
             return None
@@ -210,6 +218,8 @@ class CoachService:
             log.exception("LLM chat answer failed")
             return None
         latency_ms = int((time.perf_counter() - t0) * 1000)
+        self.stats_chat_count += 1
+        self.stats_total_latency_ms += latency_ms
         if text:
             self._db.save_coaching_tip(
                 match_id=match_id,

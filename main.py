@@ -7,13 +7,14 @@ Requires Dota in borderless windowed; GSI pointed at http://127.0.0.1:3000/
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import sys
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 
 from src.config_loader import load_config
@@ -21,6 +22,7 @@ from src.db.store import Database
 from src.gsi.server import create_gsi_app
 from src.llm.coach import CoachService
 from src.llm.factory import build_llm_provider
+from src.overlay.debug_panel import DebugSnapshot
 from src.overlay.window import CoachOverlayWindow
 from src.preflight import run_preflight
 from src.state.aggregator import StateAggregator
@@ -34,6 +36,16 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("coach")
+
+
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Dota 2 AI Coach")
+    p.add_argument(
+        "--debug",
+        action="store_true",
+        help="Launch with debug panel showing live GSI, stats, and logs",
+    )
+    return p.parse_args()
 
 
 class TipBridge(QObject):
@@ -65,6 +77,7 @@ class AsyncLoopRunner:
 
 
 def main() -> int:
+    args = _parse_args()
     root = Path(__file__).resolve().parent
     cfg = load_config(root)
 
@@ -149,7 +162,12 @@ def main() -> int:
     overlay = CoachOverlayWindow(
         position=str(overlay_cfg.get("position", "top_right")),
         tip_duration_ms=int(float(overlay_cfg.get("tip_duration_seconds", 8.0)) * 1000),
+        debug=args.debug,
     )
+
+    if args.debug and overlay.debug_panel is not None:
+        logging.getLogger().addHandler(overlay.debug_panel.log_handler)
+        log.info("Debug mode enabled")
 
     bridge.tip.connect(overlay.enqueue_tip, Qt.ConnectionType.QueuedConnection)
 
@@ -170,6 +188,36 @@ def main() -> int:
         log.info("Min cooldown changed to %ds", seconds)
 
     overlay.frequency_changed.connect(on_frequency_changed, Qt.ConnectionType.QueuedConnection)
+
+    if args.debug and overlay.debug_panel is not None:
+        _debug_timer = QTimer()
+        _dp = overlay.debug_panel
+
+        def _refresh_debug() -> None:
+            g = aggregator.current().gsi
+            total = coach.stats_call_count + coach.stats_chat_count
+            avg_ms = coach.stats_total_latency_ms // total if total else 0
+            _dp.update_snapshot(DebugSnapshot(
+                hero=g.hero_name or "-",
+                game_state=g.game_state or "-",
+                gold=str(g.player_gold) if g.player_gold else "-",
+                level=str(g.player_level) if g.player_level else "-",
+                kda=f"{g.player_kills}/{g.player_deaths}/{g.player_assists}",
+                game_time=f"{g.game_time_s}s" if g.game_time_s else "-",
+                team=g.player_team or "-",
+                score=f"{g.radiant_score}-{g.dire_score}",
+                items=", ".join(g.player_items[:6]) if g.player_items else "-",
+                llm_calls=coach.stats_call_count,
+                llm_chats=coach.stats_chat_count,
+                llm_avg_ms=avg_ms,
+                llm_last_reason=coach.stats_last_reason or "-",
+                vision_mode=vision.mode,
+                capture_fps=f"{fps:.1f}",
+                gsi_event_count=aggregator.gsi_event_count,
+            ))
+
+        _debug_timer.timeout.connect(_refresh_debug)
+        _debug_timer.start(500)
 
     capture.start()
     vision.start()

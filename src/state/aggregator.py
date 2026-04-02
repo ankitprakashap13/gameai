@@ -75,6 +75,7 @@ class StateAggregator:
         self._history: deque[GameState] = deque()
         self._vision_pipeline: VisionPipeline | None = None
         self._on_meaningful_change = on_meaningful_change
+        self.gsi_event_count: int = 0
         self._lifecycle = MatchLifecycle(
             db,
             on_match_start=self._handle_match_start,
@@ -117,6 +118,7 @@ class StateAggregator:
         return self._lifecycle.match_id
 
     def on_gsi_payload(self, payload: dict[str, Any]) -> None:
+        self.gsi_event_count += 1
         parsed = parse_gsi_payload(payload)
         self._lifecycle.update(parsed)
 
