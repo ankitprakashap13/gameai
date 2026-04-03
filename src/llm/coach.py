@@ -17,12 +17,20 @@ log = logging.getLogger(__name__)
 SYSTEM_PROMPT = """You are a concise Dota 2 coach. Give practical, safe-for-gameplay tips.
 Respond with ONE short line (max 15 words) of actionable advice. No profanity."""
 
+SYSTEM_PROMPT_INGAME = """You are a concise Dota 2 coach giving real-time advice during a live game.
+Consider the game phase, enemy lineup, rune timings, Roshan status, and item builds.
+Respond with ONE short, actionable tip (max 20 words). No profanity."""
+
 SYSTEM_PROMPT_DRAFT = """You are a Dota 2 draft coach for Ranked All Pick.
 Give ONE pick suggestion with a 1-2 sentence rationale. Be concise. No profanity."""
 
 SYSTEM_PROMPT_STRATEGY = """You are a Dota 2 strategy coach. The player just locked in their hero.
 Give a brief game plan in 2-3 sentences: lane matchup advice, power spikes, and key items to rush.
 Be concise and practical. No profanity."""
+
+SYSTEM_PROMPT_MIA = """You are a concise Dota 2 coach alerting about a missing enemy hero.
+Give a brief safety warning (1-2 sentences): should the player retreat, ward, or keep farming?
+Be urgent but concise. No profanity."""
 
 _MIN_COOLDOWN_S = 5.0
 
@@ -80,6 +88,31 @@ def _format_strategy_prompt(state: GameState) -> str:
     return "\n".join(lines)
 
 
+def _format_context_lines(state: GameState) -> list[str]:
+    """Build context lines from InGameContext (enemy heroes, runes, Roshan, etc.)."""
+    ctx = state.context
+    if ctx is None:
+        return []
+    lines: list[str] = []
+    if ctx.game_phase:
+        lines.append(f"Game phase: {ctx.game_phase}")
+    if ctx.enemy_heroes:
+        names = [_hero_label(h) for h in ctx.enemy_heroes]
+        lines.append(f"Enemy heroes (from draft): {', '.join(names)}")
+    if ctx.enemy_items:
+        parts = [f"{_hero_label(h)}: {', '.join(items)}" for h, items in ctx.enemy_items.items() if items]
+        if parts:
+            lines.append(f"Known enemy items: {'; '.join(parts)}")
+    if ctx.rune_note:
+        lines.append(f"Rune: {ctx.rune_note}")
+    if ctx.roshan_status and ctx.roshan_status != "unknown":
+        lines.append(f"Roshan: {ctx.roshan_status}")
+    if ctx.missing_heroes:
+        names = [_hero_label(h) for h in ctx.missing_heroes]
+        lines.append(f"MISSING from minimap: {', '.join(names)}")
+    return lines
+
+
 def _format_user_prompt(state: GameState) -> str:
     g = state.gsi
     lines = [
@@ -87,9 +120,10 @@ def _format_user_prompt(state: GameState) -> str:
         f"Game time (s): {g.game_time_s}",
         f"Gold: {g.player_gold}, Level: {g.player_level}",
         f"K/D/A: {g.player_kills}/{g.player_deaths}/{g.player_assists}",
-        f"GSI items: {g.player_items}",
+        f"GSI items: {[i for i in g.player_items if i]}",
         f"Score radiant-dire: {g.radiant_score}-{g.dire_score}",
     ]
+    lines.extend(_format_context_lines(state))
     v = state.vision
     if v:
         heroes = ", ".join(f"{h.hero_id}@({h.x_norm:.2f},{h.y_norm:.2f})" for h in v.minimap_heroes[:12])
@@ -107,6 +141,26 @@ def _format_user_prompt(state: GameState) -> str:
     return "\n".join(lines) + "\n\nGive ONE coaching tip now."
 
 
+def _format_mia_prompt(state: GameState, missing_hero_id: str) -> str:
+    """Prompt for a missing-hero alert — contextual safety warning."""
+    g = state.gsi
+    hero_name = _hero_label(missing_hero_id)
+    lines = [
+        f"ALERT: Enemy {hero_name} has disappeared from the minimap!",
+        f"Your hero: {_hero_label(g.hero_name)} | Game time: {g.game_time_s}s",
+        f"K/D/A: {g.player_kills}/{g.player_deaths}/{g.player_assists}",
+    ]
+    if g.player_gold:
+        lines.append(f"Gold: {g.player_gold}")
+    v = state.vision
+    if v and v.health_pct is not None:
+        lines.append(f"Health: {v.health_pct*100:.0f}%")
+    lines.extend(_format_context_lines(state))
+    lines.append("")
+    lines.append("Give a brief safety warning: should the player retreat, ward, or keep farming?")
+    return "\n".join(lines)
+
+
 def _similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
@@ -118,9 +172,12 @@ def _pick_prompt_and_system(
     """Select the right prompt + system message based on event type."""
     if reason == "user_picked_hero":
         return _format_strategy_prompt(state), SYSTEM_PROMPT_STRATEGY
+    if reason.startswith("hero_missing:"):
+        hero_id = reason.split(":", 1)[1]
+        return _format_mia_prompt(state, hero_id), SYSTEM_PROMPT_MIA
     if state.draft is not None:
         return _format_draft_prompt(state), SYSTEM_PROMPT_DRAFT
-    return _format_user_prompt(state), SYSTEM_PROMPT
+    return _format_user_prompt(state), SYSTEM_PROMPT_INGAME
 
 
 class CoachService:

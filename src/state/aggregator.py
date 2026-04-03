@@ -5,6 +5,9 @@ LLM calls are event-driven: the aggregator detects meaningful GSI changes
 on_meaningful_change.  During draft, it diffs detected hero picks and fires
 the callback only when a new hero appears — but stops once the user has
 locked in their own pick (hero_name appears in GSI during HERO_SELECTION).
+
+Timer-based events (rune spawns, Roshan respawn) and missing-hero alerts
+extend the event system beyond pure GSI diffs.
 """
 
 from __future__ import annotations
@@ -19,7 +22,15 @@ from typing import TYPE_CHECKING, Any, Callable
 from src.db.store import Database
 from src.gsi.parser import parse_gsi_payload
 from src.state.match_lifecycle import MatchLifecycle
-from src.state.models import DraftState, GameState, GSIParsedState, VisionState
+from src.state.models import (
+    DraftState,
+    EnemyItemSnapshot,
+    GameState,
+    GSIParsedState,
+    InGameContext,
+    VisionState,
+)
+from src.state.timers import GameTimerTracker, MissingHeroTracker
 
 if TYPE_CHECKING:
     from src.vision.pipeline import VisionPipeline
@@ -27,6 +38,19 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _HERO_SELECTION = "DOTA_GAMERULES_STATE_HERO_SELECTION"
+
+_PHASE_EARLY_END = 900.0   # 0-15 min
+_PHASE_MID_END = 1800.0    # 15-30 min
+
+
+def _game_phase(clock_time: float | None) -> str:
+    if clock_time is None or clock_time < 0:
+        return "pregame"
+    if clock_time < _PHASE_EARLY_END:
+        return "early"
+    if clock_time < _PHASE_MID_END:
+        return "mid"
+    return "late"
 
 
 def _draft_hero_ids(draft: DraftState | None) -> frozenset[str]:
@@ -38,6 +62,13 @@ def _draft_hero_ids(draft: DraftState | None) -> frozenset[str]:
         if p.hero_id:
             ids.append(p.hero_id)
     return frozenset(ids)
+
+
+def _draft_enemy_ids(draft: DraftState | None) -> list[str]:
+    """Return non-empty enemy hero IDs from a DraftState."""
+    if draft is None:
+        return []
+    return [p.hero_id for p in draft.enemy_picks if p.hero_id]
 
 
 def _gsi_changed(prev: GSIParsedState, curr: GSIParsedState) -> str | None:
@@ -76,6 +107,12 @@ class StateAggregator:
         self._vision_pipeline: VisionPipeline | None = None
         self._on_meaningful_change = on_meaningful_change
         self.gsi_event_count: int = 0
+
+        self._game_timer = GameTimerTracker()
+        self._mia_tracker = MissingHeroTracker()
+        self._known_enemy_heroes: list[str] = []
+        self._known_enemy_items: dict[str, list[str]] = {}
+
         self._lifecycle = MatchLifecycle(
             db,
             on_match_start=self._handle_match_start,
@@ -94,6 +131,10 @@ class StateAggregator:
     def _handle_match_end(self, match_id: int, outcome: str | None) -> None:
         if self._vision_pipeline:
             self._vision_pipeline.set_mode("idle")
+        self._known_enemy_heroes = []
+        self._known_enemy_items = {}
+        self._game_timer.reset()
+        self._mia_tracker.reset()
 
     def _handle_draft_start(self) -> None:
         if self._vision_pipeline:
@@ -108,6 +149,9 @@ class StateAggregator:
         if self._vision_pipeline:
             self._vision_pipeline.set_mode("in_game")
         with self._lock:
+            if self._draft:
+                self._known_enemy_heroes = _draft_enemy_ids(self._draft)
+                log.info("Persisted %d enemy heroes into in-game phase", len(self._known_enemy_heroes))
             self._draft = None
             self._prev_draft_heroes = frozenset()
             self._user_has_picked = False
@@ -164,6 +208,18 @@ class StateAggregator:
             log.info("GSI event: %s", reason)
             self._on_meaningful_change(self.current(), reason)
 
+        timer_reasons = self._game_timer.check(
+            parsed.clock_time_s,
+            parsed.player_items,
+            known_enemy_items=self._known_enemy_items,
+            known_enemy_heroes=self._known_enemy_heroes,
+        )
+        if timer_reasons and self._on_meaningful_change:
+            state = self.current()
+            for tr in timer_reasons:
+                log.info("Timer event: %s", tr)
+                self._on_meaningful_change(state, tr)
+
     def on_vision_state(self, vision: VisionState) -> None:
         mid = self._lifecycle.match_id
         minimap_json = json.dumps(
@@ -199,6 +255,14 @@ class StateAggregator:
         with self._lock:
             self._vision = vision
             self._push_snapshot_unlocked()
+            clock = self._gsi.clock_time_s
+
+        visible_ids = [h.hero_id for h in vision.minimap_heroes]
+        mia_reasons = self._mia_tracker.update(clock, visible_ids, self._known_enemy_heroes)
+        if mia_reasons and self._on_meaningful_change:
+            state = self.current()
+            for mr in mia_reasons:
+                self._on_meaningful_change(state, mr)
 
     def on_draft_state(self, draft: DraftState) -> None:
         with self._lock:
@@ -219,8 +283,30 @@ class StateAggregator:
         else:
             self._prev_draft_heroes = new_heroes
 
+    def on_enemy_inspect(self, snapshot: EnemyItemSnapshot) -> None:
+        """Called by vision pipeline when enemy items are detected on the HUD."""
+        hero = snapshot.hero_id
+        if not hero:
+            return
+        prev = self._known_enemy_items.get(hero, [])
+        if sorted(snapshot.items) != sorted(prev):
+            self._known_enemy_items[hero] = list(snapshot.items)
+            log.info("Enemy items updated — %s: %s", hero, snapshot.items)
+
+    def _build_context(self) -> InGameContext:
+        clock = self._gsi.clock_time_s
+        return InGameContext(
+            game_phase=_game_phase(clock),
+            enemy_heroes=list(self._known_enemy_heroes),
+            enemy_items=dict(self._known_enemy_items),
+            rune_note=self._game_timer.rune_note(clock),
+            roshan_status=self._game_timer.roshan_status(clock),
+            missing_heroes=self._mia_tracker.missing_heroes,
+        )
+
     def _push_snapshot_unlocked(self) -> None:
-        snap = GameState(gsi=self._gsi, vision=self._vision, draft=self._draft)
+        ctx = self._build_context()
+        snap = GameState(gsi=self._gsi, vision=self._vision, draft=self._draft, context=ctx)
         self._history.append(snap)
         now = snap.merged_at
         cutoff = now - timedelta(seconds=self._history_seconds)
@@ -233,6 +319,7 @@ class StateAggregator:
                 gsi=self._gsi,
                 vision=self._vision,
                 draft=self._draft,
+                context=self._build_context(),
                 merged_at=datetime.now(timezone.utc),
             )
 

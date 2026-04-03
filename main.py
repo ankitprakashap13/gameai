@@ -155,6 +155,7 @@ def main() -> int:
         debug_dir=debug_dir,
         on_vision_state=aggregator.on_vision_state,
         on_draft_state=aggregator.on_draft_state,
+        on_enemy_inspect=aggregator.on_enemy_inspect,
     )
     aggregator.attach_vision_pipeline(vision)
 

@@ -93,10 +93,32 @@ class GSIParsedState:
 
 
 @dataclass
+class EnemyItemSnapshot:
+    """Items detected on an inspected enemy hero via vision."""
+
+    hero_id: str
+    items: list[str]
+    detected_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass
+class InGameContext:
+    """Computed coaching context carried through the in-game phase."""
+
+    game_phase: str = "early"
+    enemy_heroes: list[str] = field(default_factory=list)
+    enemy_items: dict[str, list[str]] = field(default_factory=dict)
+    rune_note: str = ""
+    roshan_status: str = ""
+    missing_heroes: list[str] = field(default_factory=list)
+
+
+@dataclass
 class GameState:
     """Merged GSI + vision snapshot for LLM and history."""
 
     gsi: GSIParsedState
     vision: VisionState | None = None
     draft: DraftState | None = None
+    context: InGameContext | None = None
     merged_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

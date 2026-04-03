@@ -19,9 +19,10 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-from src.state.models import DraftState, VisionState
+from src.state.models import DraftState, EnemyItemSnapshot, VisionState
 from src.vision.detectors.cooldowns import CooldownDetector
 from src.vision.detectors.draft import DraftPortraitDetector
+from src.vision.detectors.enemy_inspect import EnemyInspectDetector
 from src.vision.detectors.health import HealthManaDetector
 from src.vision.detectors.items import ItemSlotDetector
 from src.vision.detectors.minimap import MinimapHeroDetector
@@ -40,14 +41,17 @@ class VisionPipeline:
         debug_dir: Path | str | None = None,
         on_vision_state: Callable[[VisionState], None] | None = None,
         on_draft_state: Callable[[DraftState], None] | None = None,
+        on_enemy_inspect: Callable[[EnemyItemSnapshot], None] | None = None,
     ) -> None:
         self._frame_queue = frame_queue
         self._on_vision = on_vision_state
         self._on_draft = on_draft_state
+        self._on_enemy_inspect = on_enemy_inspect
         self._minimap = MinimapHeroDetector(heroes_dir, wards_dir=wards_dir)
         self._items = ItemSlotDetector(items_dir)
         self._health = HealthManaDetector()
         self._cooldowns = CooldownDetector()
+        self._enemy_inspect = EnemyInspectDetector(items_dir)
         pdir = portraits_dir if portraits_dir is not None else Path(heroes_dir).parent / "portraits"
         self._draft = DraftPortraitDetector(pdir, fallback_heroes_dir=heroes_dir, debug_dir=debug_dir)
         self._stop = threading.Event()
@@ -129,6 +133,9 @@ class VisionPipeline:
                     vs = self.process_one(frame_bgr, w, h)
                     if self._on_vision:
                         self._on_vision(vs)
+                    ei = self._enemy_inspect.detect(frame_bgr, w, h)
+                    if ei is not None and self._on_enemy_inspect:
+                        self._on_enemy_inspect(ei)
             except Exception:
                 log.exception("Vision pipeline frame error")
                 time.sleep(0.05)

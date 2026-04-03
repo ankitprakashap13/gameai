@@ -43,6 +43,20 @@ ABILITY_SLOTS_BASE: list[ROI] = [
 ]
 
 
+# Enemy inspection panel: when the player clicks on an enemy hero, their
+# info+items appear in a panel.  These coordinates are approximate for 1080p
+# and WILL need calibration with a real in-game screenshot.
+ENEMY_INSPECT_PANEL_BASE = ROI(left=10, top=50, width=260, height=200)
+
+# Item slots inside the enemy inspection panel (relative to the panel's top-left).
+# Six slots in a 3x2 grid.  Approximate; needs calibration.
+ENEMY_INSPECT_ITEM_SLOTS_BASE: list[ROI] = [
+    ROI(left=10 + col * 48, top=140 + row * 38, width=42, height=32)
+    for row in range(2)
+    for col in range(3)
+]
+
+
 def scale_roi(roi: ROI, frame_w: int, frame_h: int) -> ROI:
     sx = frame_w / BASE_W
     sy = frame_h / BASE_H
