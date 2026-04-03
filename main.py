@@ -206,7 +206,7 @@ def main() -> int:
                 game_time=f"{g.game_time_s}s" if g.game_time_s else "-",
                 team=g.player_team or "-",
                 score=f"{g.radiant_score}-{g.dire_score}",
-                items=", ".join(g.player_items[:6]) if g.player_items else "-",
+                items=", ".join(i for i in g.player_items[:6] if i) if g.player_items else "-",
                 llm_calls=coach.stats_call_count,
                 llm_chats=coach.stats_chat_count,
                 llm_avg_ms=avg_ms,
