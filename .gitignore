@@ -13,3 +13,4 @@ dist/
 debug_*/
 debug_*.png
 *.db*
+assets/templates/*

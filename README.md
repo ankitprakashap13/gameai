@@ -284,6 +284,15 @@ The app is designed to run alongside Dota 2 with minimal impact:
 
 ---
 
+## TODO
+
+1. On selecting a different hero, take a screenshot and suggest the new strategy.
+2. Alert for runes.
+3. Item build at certain interval and money.
+4. Click through setting.
+
+---
+
 ## Troubleshooting
 
 **"No OPENAI_API_KEY found"** -- Create a `.env` file (copy from `.env.example`) and add your key. Or switch to Ollama for free local LLM.
